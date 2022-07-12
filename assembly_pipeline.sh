@@ -131,7 +131,7 @@
     echo "File to use: $prokka_dir/"$strain"_annotated.fna"
 
     #Output path
-    mkdir abricate
+    mkdir $1/abricate
     abr_dir=$1/abricate
     echo "Output will be located at $abr_dir"
 
