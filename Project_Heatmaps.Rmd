@@ -1,0 +1,267 @@
+---
+title: "Project heatmaps"
+author: "Amy Ó Brolcháin"
+date: '2022-07-09'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This markdown file shows how use the output of ABRicate or AMRFinder to create presence/absence matrices and how to use those matrices in order to create heatmaps using the pheatmap library.
+
+## Setup
+
+First, the libraries to be loaded and the data sets to be used must be defined:
+
+```{r libraries, message=FALSE}
+#dplyr is used for manipulating data
+library(dplyr)
+#RColourBrewer is used for its colours
+library(RColorBrewer)
+#pheatmap is used for the pheatmap() function to make heatmaps
+library(pheatmap)
+
+#Setting names of ABRicate and AMRFinder reports
+card_data = "card_report.txt"
+vfdb_data = "vfdb_report.txt"
+ecoli_vf_data = "ecoli_vf_report.txt"
+plasmid_data = "plasmidfinder_report.txt"
+amrfinder_data = "amrfinder_report.txt"
+
+#Setting metadata files
+##Contains 3 columns: an accession column that corresponds to an identifier in the first
+##coulumn of the report, a species column with the species name, and a strain coulmn with
+##the strain name. See example included.
+name_file = "names_total.csv"
+
+##Heatmaps metadata file has the names used from the name file (columns 2-3) as the entries
+##of the first column, and variables to examine as the next columns. See example included.
+metadata = read.csv("heatmaps_metadata.csv")
+rownames(metadata)=metadata$Names
+metadata_heat=select(metadata, !Names)
+
+#Setting up colours for annotation manually using hex colour codes
+##These can be altered to suit the data
+metadata_heat$Source = as.factor(metadata_heat$Source)
+metadata_heat$Location = as.factor(metadata_heat$Location)
+metadata_heat$Assembly.Status = as.factor(metadata_heat$Assembly.Status)
+ann_colours = list(
+  Source = c(Bird = "#f8f132", Deer_meat = "#ff9be7", Domesticated_Animal = "#a840ac", 
+             Environment = "#68d165", Freshwater = "#4941ea", Human = "#e42229",
+             Wildlife = "#ff8736", Forest_soil = "#58f1a5"),
+  Location = c(Australia = "#f8f132", China = "#ff8736", Ireland = "#0b9013",
+               Japan = "#a840ac", Pakistan = "#ff91a2", UK = "#4941ea",
+               USA = "#e42229", Eastern_Europe = "#61e3ff", Western_Europe = "#c38161",
+               Southern_Europe = "#cfc1f7", Northern_Europe = "#58f1a5"),
+  Assembly.Status = c(Contig = "#e42229", Scaffold = "#ff8736", Complete = "#00bb00")
+)
+```
+
+
+## Function
+
+The next step is to set up the function that creates the copy number matrix which forms the input for the heatmaps
+
+```{r function}
+#This function creates a data frame of gene copy numbers bacteria (as columns) and genes (as rows), where each entry corresponds to the number of copies of that gene (row) found in that bacterium (column)
+#The function is designed to work with ABRicate and AMRFinder datasets.
+Copy_number_matrix = function(file, name_file, dis_col, dis_val, amr){
+  
+  #Loading the data
+  foi=read.delim(file=file, header = T, sep = "\t")
+  
+  #Filter out objects in the file that are not of interest
+  #Designed to filter out any headers
+  #For ABRicate data it can be used to filter for any variable
+  if(amr==F){
+    interest = filter(foi,  foi[,dis_col] == dis_val)
+  }
+  if(amr==T){
+    interest = filter(foi,  foi[,dis_col] == "+" | foi[,dis_col] == "-")
+  }
+  
+  #Add a row with desired strain names to the data
+  names=read.csv(name_file, header = T)[,1]
+  strain_list=c()
+  for(row in 1:nrow(interest)){
+    for(mic in names){
+      if(grepl(mic, interest[row,1])){
+        strain_list[row]=mic
+      }
+    }
+  }
+  mutate(interest,STRAIN=strain_list)->interest
+  
+  #Setting up a dataframe, whith rows corresponding to unique genes, columns to bacteria
+  if(amr==F){
+    genes=data.frame(matrix(nrow = length(unique(interest$GENE)), ncol = length(names)))
+    colnames(genes)=names
+    rownames(genes)=unique(interest$GENE)
+    genes[is.na(genes)]=0
+  }
+  if(amr==T){
+    genes=data.frame(matrix(nrow = length(unique(interest[,7])), ncol = length(names)))
+    colnames(genes)=names
+    rownames(genes)=unique(interest[,7])
+    genes[is.na(genes)]=0
+  }
+  
+  #Populating rows of the dataframe with the number of copies of each gene
+  if(amr==F){
+    for(row in 1:nrow(interest)){
+      rel_row = interest[row,]
+      genes[rel_row$GENE,rel_row$STRAIN] = genes[rel_row$GENE,rel_row$STRAIN]+1
+    }
+  }
+  if(amr==T){
+    for(row in 1:nrow(interest)){
+      rel_row = interest[row,]
+      genes[rel_row[,7],rel_row$STRAIN] = genes[rel_row[,7],rel_row$STRAIN]+1
+    }
+  }
+  
+  #Setting up the name file to be used to rename the bacteria as desired
+  #First column should correspond to the current column names of the matrix
+  species_list=read.csv(name_file, header = T)
+  row.names(species_list)=species_list[,1]
+  species_list=select(species_list,!1)
+  
+  #Labelling by species
+  curr_species=colnames(genes)
+  new_names=c()
+  for(col in 1:length(curr_species)){
+    new_names[col] = paste0(species_list[curr_species[col],1], "_",
+                            species_list[curr_species[col],2])
+  }
+  colnames(genes) = new_names
+  
+  #Returning the matrix
+  return(genes)
+  }
+```
+
+
+## Heatmaps
+
+Heatmaps are created from each of the datasets.
+
+### CARD
+
+```{r card_map}
+#Using the function to format the data
+card = Copy_number_matrix(file = card_data,name_file = name_file,
+                          dis_col = "DATABASE",dis_val = "card",amr = F)
+
+#Creating the heatmap using the pretty heatmap function
+hv = pheatmap(as.matrix(card), cellheight = 6, cellwidth = 7,
+              color = colorRampPalette(rev(brewer.pal(n = 11, name = "Spectral")))(100),  
+              fontsize = 8,
+              fontsize_row = 6, fontsize_col = 6,
+              #cluster_rows = F,
+              cutree_cols = 10,
+              cutree_rows = 12,
+              border_color="white",
+              main = "CARD genes",
+              annotation_col = metadata_heat,
+              annotation_colors = ann_colours,
+              filename = "card_heatmap_1.pdf")
+```
+
+### VFDB
+
+```{r VFDB_map}
+#Using the function to format the data
+vfdb = Copy_number_matrix(file = vfdb_data,name_file = name_file,
+                          dis_col = "DATABASE",dis_val = "vfdb",amr = F)
+
+#Creating the heatmap using the pretty heatmap function
+##Genes present in more than 20 copies are set to 4, as astA is present in 34 copies in
+##E. marmotae HT073016_2, and no other gene is present in more than 4 copies
+vfdb_red = vfdb
+vfdb_red[vfdb_red>33] = 4
+hv = pheatmap(as.matrix(vfdb_red), cellheight = 6, cellwidth = 7,
+              color = colorRampPalette(
+                rev(c((brewer.pal(n = 9, name = "Spectral")),"#1E1E66")))(100),  
+              fontsize = 8,
+              fontsize_row = 6, fontsize_col = 6,
+              cutree_cols = 8,
+              cutree_rows = 26,
+              border_color="white",
+              main = "VFDB genes",
+              annotation_col = metadata_heat,
+              annotation_colors = ann_colours,
+              filename = "vfdb_heatmap_1.png")
+```
+
+### E. coli VF
+
+```{r ecolivf_map}
+#Using the function to format the data
+ecoli_vf = Copy_number_matrix(file = ecoli_vf_data,name_file = name_file,
+                             dis_col = "DATABASE",dis_val = "ecoli_vf",amr = F)
+
+#Creating the heatmap using the pretty heatmap function
+##Genes present in more than 20 copies are set to 4, as astA is present in 34 copies in
+##E. marmotae HT073016_2, and no other gene is present in more than 4 copies
+ecoli_red = ecoli_vf
+ecoli_red[ecoli_red>33] = 4
+hv = pheatmap(as.matrix(ecoli_red), cellheight = 6, cellwidth = 7,
+              color = colorRampPalette(
+                rev(c((brewer.pal(n = 11, name = "Spectral")),"#1E1E66")))(100),  
+              fontsize = 8,
+              fontsize_row = 6, fontsize_col = 6,
+              cutree_cols = 10,
+              cutree_rows = 35,
+              border_color="white",
+              main = "E. coli VF genes",
+              annotation_col = metadata_heat,
+              annotation_colors = ann_colours,
+              filename = "ecoli_vf_heatmap_1.png")
+```
+
+### PlasmidFinder
+
+```{r plasmid_map}
+#Using the function to format the data
+plasmids = Copy_number_matrix(file = plasmid_data,name_file = name_file,
+                              dis_col = "DATABASE",dis_val = "plasmidfinder",amr = F)
+
+#Creating the heatmap using the pretty heatmap function
+hv = pheatmap(as.matrix(plasmids), cellheight = 7, cellwidth = 7,
+              color = colorRampPalette(rev(brewer.pal(n = 11, name = "Spectral")))(100),  
+              fontsize = 8,
+              fontsize_row = 6, fontsize_col = 6,
+              cutree_cols = 15,
+              border_color="white",
+              main = "PlasmidFinder genes",
+              annotation_col = metadata_heat,
+              annotation_colors = ann_colours,
+              filename = "plasmidfinder_heatmap_1.pdf")
+```
+
+### AMRFinder
+
+```{r amrfinder_map}
+#Using the function to format the data
+amrfinder = Copy_number_matrix(file = amrfinder_data,name_file = name_file,
+                              dis_col = "Strand",dis_val = NA,amr = T)
+
+#Creating the heatmap using the pretty heatmap function
+hv = pheatmap(as.matrix(amrfinder), cellheight = 7, cellwidth = 7,
+              color = colorRampPalette(
+                rev(c(brewer.pal(n = 8, name = "Spectral"),"#1E1E66")))(100),  
+              fontsize = 8,
+              fontsize_row = 6, fontsize_col = 6,
+              cutree_cols = 12,
+              cutree_rows = 25,
+              border_color="white",
+              main = "AMRFinder genes",
+              annotation_col = metadata_heat,
+              annotation_colors = ann_colours,
+              filename = "amrfinder_heatmap_1.pdf")
+```
+

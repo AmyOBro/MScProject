@@ -1,0 +1,253 @@
+---
+title: "Plasmid Contig Genes"
+author: "Amy Ó Brolcháin"
+date: '2022-07-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This markdown file shows how the Plasmid_contigs() function was used to search for virulence or resistance genes that were on the same contigs as plasmid genes by comparing the ABRicate PlasmidFinder dataset to other ABRicate or AMRFinder datasets.
+
+## Set-up
+
+The files of interest need to be set up and libraries loaded first.
+
+```{r foi, message=FALSE}
+#Loading libraries
+#dplyr is for manipulating data
+library(dplyr)
+#erer is for the write.list() function for writing lists to .csv
+library(erer)
+
+#Setting metadata files
+##Contains 3 columns: an accession column that corresponds to an identifier in the first
+##coulumn of the report, a species column with the species name, and a strain coulmn with
+##the strain name. See example included.
+name_file = "names_total.csv"
+
+#Input files
+card_data = "card_report.txt"
+vfdb_data = "vfdb_report.txt"
+ecoli_vf_data = "ecoli_vf_report.txt"
+plasmid_data = "plasmidfinder_report.txt"
+amrfinder_data = "amrfinder_report.txt"
+```
+
+## Function
+
+The following block compiles the function for getting the list of genes present on the same contig as a PlasmidFinder database gene. The function has three possible outputs: 
+
+1) A data frame of the presence/absence of each gene in the plasmid gene contig and their positions on the contig.
+
+2) A list of all contig contents in list format
+
+3) List of only the contents of contigs that have at least 1 gene in the query data set in addition to the plasmid gene.
+
+```{r function}
+#A function to generate an output showing which genes are found on different plasmids
+#Designed to work with ABRicate PlasmidFinder files with ABRicate or AMRFinder files
+Plasmid_contents = function(plas_file, gene_file, name_file, 
+                            dis_col, dis_val, amr, as_list){
+  
+  #Loading the file containing the identified plasmid genes
+  foi = read.delim(plas_file, header = T)
+  
+  #Filter out headers from plasmid file
+  plas_genes = filter(foi,  foi[,"DATABASE"] == "plasmidfinder")
+
+  #Add a row with desired strain names to the data
+  names=read.csv(name_file, header = T)[,1]
+  strain_list=c()
+  for(row in 1:nrow(plas_genes)){
+    for(mic in names){
+      if(grepl(mic, plas_genes[row,1])){
+        strain_list[row]=mic
+      }
+    }
+  }
+  mutate(plas_genes,STRAIN=strain_list)->plas_genes
+
+  #Making a dataframe containing the file name, sequence, gene and position in sequence
+  plas_frame = as.data.frame(cbind(Strain = plas_genes$STRAIN,
+                            Sequence = plas_genes$SEQUENCE,
+                            Gene = plas_genes$GENE,
+                            Position = paste0(plas_genes$START,"-",plas_genes$END)))
+  
+  #Loading the dataset for comparison and filtering for objects of interest
+  comp_genes = read.delim(gene_file, header = T)
+  if(amr==F){
+    interest = filter(comp_genes, comp_genes[,dis_col] == dis_val)
+  }
+  if(amr==T){
+    interest = filter(comp_genes, 
+                      comp_genes[,dis_col] == "+" | comp_genes[,dis_col] == "-")
+  }
+
+  #Getting genes that are on the same contig in the dataset  
+  for(n in 1:nrow(plas_frame)){
+    #Getting indices of rows with contig matching the plasmid gene
+    if(amr==F){
+      int_rows = which(plas_frame[n,2]==interest[,"SEQUENCE"])
+    }
+    if(amr==T){
+      int_rows = which(plas_frame[n,2]==interest[,3])
+    }
+    #If there were matches, get the rows corresponding
+    if(is.na(int_rows[1])!=T){
+      plas_rows = interest[int_rows,]
+      #Add a column with the name corresponding to the gene
+      if(amr==F){
+        for(row in 1:nrow(plas_rows)){
+          #Name of gene
+          goi = plas_rows[row,6]
+          #Make a new column if needed
+          if(!goi%in%colnames(plas_frame)){
+            mutate(plas_frame, goi = rep(NA,nrow(plas_frame))) -> plas_frame
+            plas_frame[n,goi] = paste0(plas_rows[row,3],"-",plas_rows[row,4])
+          }
+          #Or add to an existing one
+          else{
+            plas_frame[n,goi] = paste0(plas_rows[row,3],"-",plas_rows[row,4])
+          }
+        }
+      }
+      if(amr==T){
+        for(row in 1:nrow(plas_rows)){
+          #Name of gene
+          goi = plas_rows[row,7]
+          #Make a new column if needed
+          if(!goi%in%colnames(plas_frame)){
+            mutate(plas_frame, goi = rep(NA,nrow(plas_frame))) -> plas_frame
+            plas_frame[n,goi] = paste0(plas_rows[row,4],"-",plas_rows[row,5])
+          }
+          #Or add to an existing one
+          else{
+            plas_frame[n,goi] = paste0(plas_rows[row,4],"-",plas_rows[row,5])
+          }
+        }
+      }
+    }
+  }
+  #Setting up the name file to be used to rename the bacteria as desired
+  #First column should correspond to the current column names of the matrix
+  species_list=read.csv(name_file, header = T)
+  row.names(species_list)=species_list[,1]
+  species_list=select(species_list,!1)
+  
+  #Labelling by species
+  curr_species=plas_frame[,1]
+  new_names=c()
+  for(col in 1:length(curr_species)){
+    new_names[col] = paste0(species_list[curr_species[col],1], "_",
+                            species_list[curr_species[col],2])
+  }
+  plas_frame[,1] = new_names
+  
+  #Returning the dataframe with positional information
+  if(as_list == "None" | is.null(as_list)){
+    return(plas_frame)
+  }
+  
+  #Returning a list version of the content of the contig with the plasmid gene
+  #Without positional information
+  if(as_list == "Full"){
+    plas_seqs = list()
+    for(row in 1:nrow(plas_frame)){
+      plas_row = plas_frame[row,]
+      plas_row = select(plas_row, which(is.na(plas_row)==F))
+    plas_list = list(c(plas_row))
+    plas_seqs = append(plas_seqs,
+                            plas_list)
+    }
+    return(plas_seqs)
+  }
+  
+  #Returining only contigs that contain 1 or more gene in the database in addition to the
+  #plasmid gene, without positional information
+  if(as_list == "Reduced"){
+    plas_seqs = list()
+    for(row in 1:nrow(plas_frame)){
+      plas_row = plas_frame[row,]
+      plas_row = select(plas_row, which(is.na(plas_row)==F))
+    plas_list = list(c(plas_row))
+    if(ncol(plas_row)>4){
+      plas_seqs = append(plas_seqs,
+                        plas_list)
+      }
+    }
+    return(plas_seqs)
+  }
+}
+```
+
+### Using plasmid contents function
+
+The following are examples of how to use the Plasmid_contents() function to get the virulence and resistance genes on the contigs with plasmid genes. The write.list() function from the erer library can be used to write the output to file.
+
+### CARD
+
+```{r card}
+#Using plasmid contents for the CARD database
+card_plasmids = Plasmid_contents(plas_file = plasmid_data,
+                gene_file = card_data,
+                name_file = name_file,
+                dis_col = "DATABASE",
+                dis_val = "card",
+                amr = F,
+                as_list = "Reduced")
+
+#Writing to file
+write.list(card_plasmids, file = "card_plasmids.csv")
+```
+
+### VFDB
+
+```{r vfdb}
+#Using plasmid contents for the VFDB database
+vfdb_plasmids = Plasmid_contents(plas_file = plasmid_data,
+                gene_file = vfdb_data,
+                name_file = name_file,
+                dis_col = "DATABASE",
+                dis_val = "vfdb",
+                amr = F,
+                as_list = "Reduced")
+
+#Writing to file
+write.list(vfdb_plasmids, file = "vfdb_plasmids.csv")
+```
+
+### E. coli VF
+
+```{r ecoli}
+#Using plasmid contents for the E. coli Vf database
+ecoli_vf_plasmids = Plasmid_contents(plas_file = plasmid_data,
+                gene_file = ecoli_vf_data,
+                name_file = name_file,
+                dis_col = "DATABASE",
+                dis_val = "ecoli_vf",
+                amr = F,
+                as_list = "Reduced")
+
+#Writing to file
+write.list(ecoli_vf_plasmids, file = "ecoli_vf_plasmids.csv")
+```
+
+### AMRFinder
+
+```{r amrfinder}
+#Using plasmid contents for the AMRFinder database
+amrfinder_plasmids = Plasmid_contents(plas_file = plasmid_data,gene_file = amrfinder_data,
+                name_file = name_file,
+                dis_col = "Strand",
+                dis_val = NA,
+                amr = T,
+                as_list = "Reduced")
+
+#Writing to file
+write.list(amrfinder_plasmids, file = "amrfinder_plasmids.csv")
+```
