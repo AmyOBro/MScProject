@@ -13,9 +13,11 @@ The scripts in this repository were used to do the following:
 
 3. `Plasmid_contig_genes.Rmd` This is an R markdown document containing the Plasmid_contents() function used in R to find virulence or resistance genes on the same sequence as a plasmid gene using the ABRicate PlasmidFinder data and another ABRicate or AMRFinder dataset. It also contains the commands used to get the output that was used for supplememtary table 2 of the manuscript. It requires `names_total.csv` to correctly name strains.
 
+4. `database_amr.sh` was used to run abricate and AMRFinder for .gff, .fna and .faa files associated with genomes downloaded on NCBI, and `database_prokka.sh` was used to re-annotate the _E. marmotae_ genomes downloaded from NCBI to get the input .gff files used for Roary.
+
 ### Commands
 
-Outside of these scripts, the following commands were used to perform run other software:
+Outside of these scripts, the following commands were used to run other software:
 
 1. Running Roary: `singularity run ../scripts/roary.img roary -e --mafft -p 8 roary/*gff`
 
