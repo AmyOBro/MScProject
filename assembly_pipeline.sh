@@ -2,7 +2,8 @@
 
 #Note: This script requires a main directory containing fastq read files and a file named "species_file.txt" with the genus and species on separate lines.
 #It also assumes that the main directory is named after the strain, and uses that name as a label for outputs.
-#Software should be available in the folder at the image_path in the form of singularity images. See supplementary information in the manuscript for details of where images were sourced.
+#Software should be available in the folder at the image_path in the form of singularity images.
+#Images were sourced from the Staphb repository on dockerhub, or the biocontainers repository if they were not available in the Staphb repository. Software versions are described in the manuscript.
 #Reads should be paired end, and contained within separate gzipped fastq files.
 #Script should be called using "bash assembly_pipeline.sh /folder/path"
 
@@ -34,27 +35,14 @@
     mapfile -t lines <$1/species_file.txt
     echo "Species is ${lines[0]} ${lines[1]}"
 
-    #Shovill and kraken2 images
+    #Shovill image
     shovill_img=$image_path/shovill.img
-    kraken_img=$image_path/kraken2.img
 
 #Running first fastQC on raw reads
     mkdir $1/trimmomatic/fastqc_run1
     singularity run $image_path/fastqc.img fastqc -o $1/trimmomatic/fastqc_run1 \
         --extract --nogroup --format fastq --threads 6 --dir $1/trimmomatic \
         $pair_1_raw $pair_2_raw
-
-#Making Kraken2 directory and running initiall check on reads
-    mkdir $1/kraken2
-    mkdir $1/kraken2/run1
-    singularity run $kraken_img kraken2 \
-        --db "/home/amy/Documents/Genomics_Project/kraken2-db/standard_16GB" \
-        --memory-mapping \
-        --threads 6 \
-        --report $1/kraken2/run1/"$strain"_kraken2.txt \
-        --use-names \
-        --output $1/kraken2/run1 \
-        --paired $pair_1_raw $pair_2_raw
 
 #Running trimmomatic on reads, using the trimmomatic executable from the shovill image
     singularity run $shovill_img trimmomatic PE -threads 6 -phred33 \
@@ -79,17 +67,6 @@
 	--ram 15 \
 	--outdir $1/shovill \
 	--R1 $pair_1 --R2 $pair_2
-
-#Running Kraken2 a second time on the assembly
-    mkdir $1/kraken2/run2
-    singularity run $kraken_img kraken2 \
-	--db "/home/amy/Documents/Genomics_Project/kraken2-db/standard_16GB" \
-	--memory-mapping \
-	--threads 6 \
-	--report $1/kraken2/run2/"$strain"_kraken2.txt \
-	--use-names \
-	--output $1/kraken2/run2 \
-	$1/shovill/contigs.fa
 
 #Running Prokka
 
