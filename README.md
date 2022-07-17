@@ -19,6 +19,6 @@ The scripts in this repository were used to do the following:
 
 Outside of these scripts, the following commands were used to run other software:
 
-1. Running Roary: `singularity run ../scripts/roary.img roary -e --mafft -p 8 roary/*gff`
+1. Running Roary: `singularity run ../scripts/roary.img roary -p 8 roary/*gff`
 
 2. Running Parsnp: `singularity run ../scripts/parsnp.img parsnp -r ../phylogeny/assembled/HT073016-2_annotated.fna -d ../phylogeny/assembled/`
